@@ -1,0 +1,43 @@
+spring:
+  application:
+    name: yuan-ai-agent
+  profiles:
+    active: local
+  ai:
+    dashscope:
+      api-key: ${API-KEY}
+      chat:
+        options:
+          model: qwen-plus
+    ollama:
+      base-url: http://localhost:11434
+      chat:
+        model: deepseek-r1:7b
+
+server:
+  port: 8123
+  servlet:
+    context-path: /api
+
+# springdoc-openapi config
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    tags-sorter: alpha
+    operations-sorter: alpha
+  api-docs:
+    path: /v3/api-docs
+  group-configs:
+    - group: 'default'
+      paths-to-match: '/**'
+      packages-to-scan: com.yuan.yuanaiagent.controller
+
+# knife4j config
+knife4j:
+  enable: true
+  setting:
+    language: zh_cn
+
+logging:
+  level:
+    org.springframework.ai: DEBUG
