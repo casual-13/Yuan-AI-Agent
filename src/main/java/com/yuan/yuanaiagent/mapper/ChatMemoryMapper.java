@@ -15,7 +15,7 @@ import java.util.List;
 * @createDate 2026-01-11 08:09:51
 * @Entity generator.domain.ChatMemory
 */
-@Mapper
+//@Mapper
 public interface ChatMemoryMapper extends BaseMapper<ChatMemory> {
 
     /**

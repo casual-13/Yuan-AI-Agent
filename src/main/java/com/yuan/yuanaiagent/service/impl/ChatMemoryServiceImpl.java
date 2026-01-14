@@ -21,7 +21,7 @@ import java.util.stream.Collectors;
 /**
  * 聊天记忆服务实现类
  */
-@Service
+//@Service
 @Slf4j
 public class ChatMemoryServiceImpl extends ServiceImpl<ChatMemoryMapper, ChatMemory>
         implements ChatMemoryService {

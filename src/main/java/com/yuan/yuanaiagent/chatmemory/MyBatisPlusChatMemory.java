@@ -14,7 +14,7 @@ import java.util.List;
  * 使用ChatMemoryService进行数据库操作
  */
 //todo 按需打开
-@Component
+//@Component
 @Slf4j
 public class MyBatisPlusChatMemory implements ChatMemory {
 

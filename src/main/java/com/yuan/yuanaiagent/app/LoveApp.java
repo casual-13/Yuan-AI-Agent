@@ -8,9 +8,14 @@ import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
+import org.springframework.ai.chat.client.advisor.api.Advisor;
+import org.springframework.ai.chat.client.advisor.vectorstore.QuestionAnswerAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
+import org.springframework.ai.chat.memory.InMemoryChatMemoryRepository;
+import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
@@ -32,20 +37,20 @@ public class LoveApp {
      *
      * @param dashscopeChatModel
      */
-    public LoveApp(ChatModel dashscopeChatModel, @Qualifier("myBatisPlusChatMemory") ChatMemory chatMemory) {
+    public LoveApp(ChatModel dashscopeChatModel/*, @Qualifier("myBatisPlusChatMemory") ChatMemory chatMemory*/) {
         // 1. 创建聊天记忆
 
 //        // 初始化基于文件的对话记忆
 //        String fileDir = System.getProperty("user.dir") + "/tmp/chat-memory";
 //        ChatMemory chatMemory = new FileBasedChatMemory(fileDir);
 
-//        // 初始化基于文件的对话记忆
-//        MessageWindowChatMemory chatMemory = MessageWindowChatMemory.builder()
-//                // 存储位置
-//                .chatMemoryRepository(new InMemoryChatMemoryRepository())
-//                // 容量限制
-//                .maxMessages(20)
-//                .build();
+        // 初始化基于文件的对话记忆
+        MessageWindowChatMemory chatMemory = MessageWindowChatMemory.builder()
+                // 存储位置
+                .chatMemoryRepository(new InMemoryChatMemoryRepository())
+                // 容量限制
+                .maxMessages(20)
+                .build();
         // 2. 构建聊天客户端
         chatClient = ChatClient.builder(dashscopeChatModel)
                 // 系统提示词
@@ -107,5 +112,38 @@ public class LoveApp {
                 .entity(LoveReport.class);
         log.info("loveReport: {}", loveReport);
         return loveReport;
+    }
+
+    // AI 恋爱知识库问答功能
+
+    @Resource
+    private VectorStore loveAppVectorStore;
+
+    @Resource
+    private Advisor loveAppRagCloudAdvisor;
+
+    /**
+     * 和 RAG 知识库进行对话
+     *
+     * @param message
+     * @param chatId
+     * @return
+     */
+    public String doChatWithRag(String message, String chatId) {
+        ChatResponse chatResponse = chatClient
+                .prompt()
+                .user(message)
+                .advisors(spec -> spec.param(ChatMemory.CONVERSATION_ID, chatId))
+                // 开启日志，便于观察效果
+//                .advisors(new MyLoggerAdvisor())
+                // 应用 RAG 知识库问答
+//                .advisors(new QuestionAnswerAdvisor(loveAppVectorStore))
+                // 应用 RAG 检索增强服务（基于云知识库服务）
+                .advisors(loveAppRagCloudAdvisor)
+                .call()
+                .chatResponse();
+        String content = chatResponse.getResult().getOutput().getText();
+        log.info("content: {}", content);
+        return content;
     }
 }

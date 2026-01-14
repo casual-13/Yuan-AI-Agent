@@ -1810,3 +1810,335 @@ public LoveApp(ChatModel dashscopeChatModel, @Qualifier("myBatisPlusChatMemory")
 
 ![](./img/pic12.png)
 
+
+
+## 第三章 RAG知识库基础
+
+**本章学习📚**
+
+1、AI知识问答需求分析：RAG技术整合私有知识库，提供个性化恋爱建议
+2、RAG核心概念：检索增强生成，提升答案准确性，减少模型幻觉
+3、[Spring](https://www.mianshiya.com/bank/1790683494127804418) AI本地实战：文档处理、向量存储与RAG集成实现
+4、云知识库开发：阿里云百炼平台部署，简化RAG全流程管理
+
+### AI 知识问答需求分析
+
+**AI知识问答 在恋爱咨询中通过RAG技术整合私有知识库（如课程、案例），提供个性化建议（如矛盾解决、课程推荐），实现精准服务与课程变现闭环，同时支持社区互动和匹配服务，平衡用户体验与商业价值**
+
+### RAG 概念（重点）
+
+#### 什么是 RAG？
+
+推荐 B站视频：[20分钟速成 RAG & 向量数据库核心概念 【小白学AI系列 -1 】_哔哩哔哩_bilibili](https://www.bilibili.com/video/BV11zf6YyEnT/?share_source=copy_web&vd_source=f64346e5ced06752cd6189d73ddefc00)
+
+![](./img/pic13.png)
+
+**RAG（Retrieval-Augmented Generation，检索增强生成）**
+
+- RAG（Retrieval-Augmented Generation）是一种结合检索和生成的技术，用于增强生成模型的表现。
+
+1. **知识库准备**：将文档切成小块，用嵌入模型转化为向量，存储在向量数据库中。
+2. **查询处理**：将用户查询转为向量，从数据库中检索 Top K 个相关文本块，再结合查询输入生成模型，输出答案。
+
+**优点**：提升答案准确性，减少生成“幻觉”。
+**挑战**：效果依赖嵌入模型质量和知识库覆盖范围。
+
+**第一**，把文档切分成小块，使用嵌入模型将其向量化，并存入向量数据库，方便后续快速检索。
+
+**第二**，当用户提问时，系统会先将问题转为向量，然后在数据库中检索出最相关的内容块，最后将这些内容与问题一起发送给大语言模型，让模型基于上下文生成答案。
+
+#### RAG 工作流程
+
+**1. 文档收集和切割**
+
+- **文档收集**：从网页、PDF、数据库等各种来源收集原始文档。
+- **文档预处理**：清洗、标准化文本格式。
+- **文档切割**：将长文档分割成适当大小的片段，可基于固定大小、语义边界、递归分割策略。
+
+**2、向量转换和存储**
+
+- **向量转换**：使用Embedding模型将文本块转换为高维向量表示，以捕获文本的语义特征。
+- **向量存储**：将生成的向量和对应文本存入向量数据库，支持高效的相似性搜索。
+
+**3、文档过滤和检索**
+
+- **查询处理**：将用户问题转换为向量表示。
+- **过滤机制**：基于元数据、关键词或自定义规则进行过滤。
+- **相似度搜索**：在向量数据库中查找与问题向量最相似的文档块，常用算法有余弦相似度、欧氏距离等。
+- **上下文组装**：将检索到的多个文档块组装成连贯上下文。
+
+**4、查询增强和关联**
+
+- **提示词组装**：将检索到的相关文档与用户问题组合成增强提示。
+- **上下文融合**：大模型基于增强提示生成回答。
+- **源引用**：在回答中添加信息来源引用。
+- **后处理**：格式化、摘要或其他处理以优化最终输出。
+
+#### RAG相关技术
+
+- **Embedding**：将数据转为语义向量，维度越高语义越细、存储越大。
+- **向量数据库**：专存向量，高效查相似(Pinecone，Milvus)，分专用 / 扩展型（PGVector，Redis-Stack）。
+- **召回**：初筛粗相关候选，速度广度：如捕鱼 大范围撒网~。
+- **精排**：对匹配到的数据进行优劣排序，末段细排序，用 Rank 模型 结合多特征打分，。
+- **混合检索**：各大厂商匹配技术，关键词 + 向量检索，调权重。
+  **核心**：检索补外部知识，生成更准，解大模型时效与幻觉。
+
+### RAG 实战：Spring AI + 本地知识库
+
+#### 核心流程与步骤
+
+**a. 文档准备**
+
+- **格式：**使用结构化Markdown文档，强调结构化（可扔给 AI 分析成结构化，为后续更准确的回答）。
+- **存储：**存放在本地资源目录下（如resource/*.md）。
+
+**b. 文档读取（ETL）**
+
+- 利用 SpringAI tika + markdown 解决大部分所有文件~
+
+
+- DocumentReader：读取文档，得到文档列表
+
+
+- DocumentTransformer：转换文档，得到处理后的文档列表
+
+
+- DocumentWriter：将文档列表保存到存储中
+
+```xml
+<!-- Markdown 文档读取器 -->
+<dependency>
+    <groupId>org.springframework.ai</groupId>
+    <artifactId>spring-ai-markdown-document-reader</artifactId>
+</dependency>
+			
+<!-- Tika 文档读取器 -->
+<dependency>
+    <groupId>org.springframework.ai</groupId>
+    <artifactId>spring-ai-tika-document-reader</artifactId>
+</dependency>
+```
+
+**c. 向量转换与存储**
+
+- **工具**：可以使用Spring AI内置的SimpleVectorStore（内存型向量数据库）。
+- **流程**： 嵌入模型 DashScope 将文档内容转换为向量。通过VectorStore保存向量及元数据到内存中。
+- **配置示例将文件存储至内存向量中：**
+
+```java
+package com.yuan.yuanaiagent.rag;
+
+import jakarta.annotation.Resource;
+import org.springframework.ai.document.Document;
+import org.springframework.ai.embedding.EmbeddingModel;
+import org.springframework.ai.vectorstore.SimpleVectorStore;
+import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+import java.util.List;
+
+/**
+ * 恋爱大师向量数据库配置（初始化基于内存的向量数据库 Bean）
+ */
+@Configuration
+public class LoveAppVectorStoreConfig {
+
+    @Resource
+    private LoveDocumentLoader loveDocumentLoader;
+
+    @Bean
+    public VectorStore loveAppVectorStore(EmbeddingModel dashscopeEmbeddingModel) {
+        SimpleVectorStore simpleVectorStore = SimpleVectorStore.builder(dashscopeEmbeddingModel).build();
+        // 加载文档
+        List<Document> documents = loveDocumentLoader.loadMarkdowns();
+        simpleVectorStore.add(documents);
+        return simpleVectorStore;
+    }
+}
+```
+
+**d. 查询增强**
+
+- **机制**：通过`QuestionAnswerAdvisor`拦截器增强问答流程。
+- **流程**：用户提问时，拦截器检索向量数据库获取相关文档切片。 将检索结果拼接至用户问题，作为AI生成回答的上下文。
+- **代码如下**：
+
+```java
+@Resource
+private VectorStore loveAppVectorStore;
+
+/**
+ * 和 RAG 知识库进行对话
+ *
+ * @param message
+ * @param chatId
+ * @return
+ */
+public String doChatWithRag(String message, String chatId) {
+    ChatResponse chatResponse = chatClient
+            .prompt()
+            .user(message)
+            .advisors(spec -> spec.param(ChatMemory.CONVERSATION_ID, chatId))
+            // 开启日志，便于观察效果
+            .advisors(new MyLoggerAdvisor())
+            // 应用 RAG 知识库问答
+            .advisors(new QuestionAnswerAdvisor(loveAppVectorStore))
+            .call()
+            .chatResponse();
+    String content = chatResponse.getResult().getOutput().getText();
+    log.info("content: {}", content);
+    return content;
+}
+```
+
+**测试如下：**
+
+![](./img/pic14.png)
+
+![](./img/pic15.png)
+
+### RAG 实战：Spring AI + 云知识库服务
+
+#### 云知识库开发模式概述
+
+**核心目标**：利用云服务（如阿里云百炼：[知识库_大模型服务平台百炼(Model Studio)-阿里云帮助中心](https://help.aliyun.com/zh/model-studio/rag-knowledge-base)）简化 RAG 开发，避免本地部署复杂性。
+
+- **优点**： 快速部署，无需管理向量数据库。 平台自动处理文档解析、切片、存储等流程。
+- **缺点**： 依赖第三方服务，产生费用。 数据隐私需平台保障。
+
+#### 阿里云百炼平台操作
+
+1. **准备数据打上标签**： 在阿里云百炼的 **应用数据** 模块上传文档。平台自动解析文档内容和结构。
+2. **创建知识库**： 进入 **知识库** 模块，新建知识库并选择配置。
+3. **导入数据到知识库**：
+
+- 选择已上传的数据，设置预处理规则（如切片策略、分段方式）。
+- **智能切片**：平台自动将文档分割为合理片段（可手动调整）。
+
+4. **管理知识库**：
+
+- 查看文档及切片内容，支持手动编辑切片（如调整边界或合并/拆分）。
+
+**扩展官方解释 精简版：**
+
+| 参数组别       | 核心目标                                             | 选择依据                                                 |
+| -------------- | ---------------------------------------------------- | -------------------------------------------------------- |
+| 配置模式       | 确定知识库的基础配置方式（推荐或自定义）。           | 是否需要灵活调整检索参数。                               |
+| 向量存储类型   | 选择向量数据库类型，影响存储能力与扩展性。           | 是否需要高级管理功能（如审计、监控）。                   |
+| Metadata抽取   | 通过元数据增强检索准确性，减少无关结果。             | 文档是否包含可关联的结构化属性（如产品名称、文档分类）。 |
+| Excel表头拼装  | 确保 Excel 数据行与表头正确关联，避免模型误读。      | 是否批量处理结构化 Excel 文件。                          |
+| 文档切分 Chunk | 控制文本切片的生成逻辑，直接影响检索精度与存储效率。 | 文档格式复杂度、是否需要语义分割。                       |
+
+#### RAG 开发
+
+**a、 配置云知识库检索**
+
+```java
+package com.yuan.yuanaiagent.rag;
+
+import com.alibaba.cloud.ai.dashscope.api.DashScopeApi;
+import com.alibaba.cloud.ai.dashscope.rag.DashScopeDocumentRetriever;
+import com.alibaba.cloud.ai.dashscope.rag.DashScopeDocumentRetrieverOptions;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.chat.client.advisor.api.Advisor;
+import org.springframework.ai.rag.advisor.RetrievalAugmentationAdvisor;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+@Configuration
+@Slf4j
+public class LoveAppRagCloudAdvisorConfig {
+
+    // 从配置文件读取 DashScope API 密钥
+    @Value("${spring.ai.dashscope.api-key}")
+    private String dashScopeApiKey;
+
+    // 定义 Bean 方法，创建检索增强顾问
+    @Bean
+    public Advisor loveAppRagCloudAdvisor() {
+        // 创建 DashScope API 客户端
+        DashScopeApi dashScopeApi = DashScopeApi.builder()
+                .apiKey(dashScopeApiKey)
+                .build();
+        // 知识库名称
+        final String KNOWLEDGE_INDEX = "智能分配交友";
+        // 创建文档检索器，连接指定知识库
+        DashScopeDocumentRetriever dashScopeDocumentRetriever = new DashScopeDocumentRetriever(dashScopeApi,
+                DashScopeDocumentRetrieverOptions.builder()
+                        .withIndexName(KNOWLEDGE_INDEX)
+                        .build());
+        // 构建并返回检索增强顾问
+        return RetrievalAugmentationAdvisor.builder()
+                .documentRetriever(dashScopeDocumentRetriever)
+                .build();
+    }
+}
+```
+
+**b、集成到聊天服务**
+
+```java
+// AI 恋爱知识库问答功能
+
+    @Resource
+    private VectorStore loveAppVectorStore;
+
+    @Resource
+    private Advisor loveAppRagCloudAdvisor;
+
+    /**
+     * 和 RAG 知识库进行对话
+     *
+     * @param message
+     * @param chatId
+     * @return
+     */
+    public String doChatWithRag(String message, String chatId) {
+        ChatResponse chatResponse = chatClient
+                .prompt()
+                .user(message)
+                .advisors(spec -> spec.param(ChatMemory.CONVERSATION_ID, chatId))
+                // 开启日志，便于观察效果
+//                .advisors(new MyLoggerAdvisor())
+                // 应用 RAG 知识库问答
+//                .advisors(new QuestionAnswerAdvisor(loveAppVectorStore))
+                // 应用 RAG 检索增强服务（基于云知识库服务）
+                .advisors(loveAppRagCloudAdvisor)
+                .call()
+                .chatResponse();
+        String content = chatResponse.getResult().getOutput().getText();
+        log.info("content: {}", content);
+        return content;
+    }
+```
+
+**测试如图**
+
+![](./img/pic16.png)
+
+![](./img/pic17.png)
+
+**1、准备文档加载到阿里云新知识库。**
+
+[📎全国恋爱人信息.xlsx](https://docs.qq.com/sheet/DUXhiT0xMaFNxWWhi?_bid=1&client=drive_file)
+
+![](./img/pic18.png)
+
+**2、直接测试，主要还是数据，和结构化和云平台技术。**
+
+```java
+final String KNOWLEDGE_INDEX = "智能分配交友";
+
+@Test
+void doChatWithRagcloud() {
+    String chatId = UUID.randomUUID().toString();
+    String message = "我是牛马座20岁，男大学生在广州，我想找对象~，帮我找找有没有适合我的";
+    String answer =  loveApp.doChatWithRag(message, chatId);
+    Assertions.assertNotNull(answer);
+}
+```
+
+![](./img/pic19.png)
+
