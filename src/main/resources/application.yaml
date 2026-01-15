@@ -3,6 +3,12 @@ spring:
     name: yuan-ai-agent
   profiles:
     active: local
+  # 临时注释掉，便于大家开发调试和部署（实际填写 PgVector 数据库信息）
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    url: jdbc:postgresql://localhost:5432/postgres?currentSchema=public&connectTimeout=60&socketTimeout=60
+    username: postgres
+    password: password
   ai:
     dashscope:
       api-key: ${API-KEY}
@@ -13,6 +19,16 @@ spring:
       base-url: http://localhost:11434
       chat:
         model: deepseek-r1:7b
+    # 临时注释掉，便于大家开发调试和部署（实际需要启动 PgVector 数据库）
+#    vectorstore:
+#      pgvector:
+#        index-type: HNSW
+#        dimensions: 1536
+#        distance-type: COSINE_DISTANCE
+#        max-document-batch-size: 10000 # Optional: Maximum number of documents per batch
+#        initialize-schema: true
+#        schema-name: public
+#        table-name: vector_store
 #  # 数据库配置
 #  datasource:
 #    driver-class-name: com.mysql.cj.jdbc.Driver

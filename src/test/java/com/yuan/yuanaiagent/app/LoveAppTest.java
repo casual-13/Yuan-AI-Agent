@@ -18,8 +18,9 @@ public class LoveAppTest {
     public void test() {
         String chatId = UUID.randomUUID().toString();
         // 第一轮
-        String message = "你好，我是阿源";
-        String answer = loveApp.doChat(message, chatId);
+        String message = null;
+        String answer = loveApp.doChatWithRag(message, chatId);
+        Assertions.assertNotNull(answer);
     }
 
     @Test

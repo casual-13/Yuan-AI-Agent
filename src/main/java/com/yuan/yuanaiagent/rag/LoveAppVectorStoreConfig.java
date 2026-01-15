@@ -17,14 +17,19 @@ import java.util.List;
 public class LoveAppVectorStoreConfig {
 
     @Resource
-    private LoveDocumentLoader loveDocumentLoader;
+    private LoveAppDocumentLoader loveAppDocumentLoader;
+
+    @Resource
+    private MyKeywordEnricher myKeywordEnricher;
 
     @Bean
     public VectorStore loveAppVectorStore(EmbeddingModel dashscopeEmbeddingModel) {
         SimpleVectorStore simpleVectorStore = SimpleVectorStore.builder(dashscopeEmbeddingModel).build();
         // 加载文档
-        List<Document> documents = loveDocumentLoader.loadMarkdowns();
-        simpleVectorStore.add(documents);
+        List<Document> documents = loveAppDocumentLoader.loadMarkdowns();
+        // 自动补充关键词元信息
+        List<Document> enrichedDocuments = myKeywordEnricher.enrichDocuments(documents);
+        simpleVectorStore.add(enrichedDocuments);
         return simpleVectorStore;
     }
 }

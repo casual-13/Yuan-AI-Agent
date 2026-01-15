@@ -1944,17 +1944,17 @@ import java.util.List;
 @Configuration
 public class LoveAppVectorStoreConfig {
 
-    @Resource
-    private LoveDocumentLoader loveDocumentLoader;
+  @Resource
+  private LoveAppDocumentLoader loveDocumentLoader;
 
-    @Bean
-    public VectorStore loveAppVectorStore(EmbeddingModel dashscopeEmbeddingModel) {
-        SimpleVectorStore simpleVectorStore = SimpleVectorStore.builder(dashscopeEmbeddingModel).build();
-        // 加载文档
-        List<Document> documents = loveDocumentLoader.loadMarkdowns();
-        simpleVectorStore.add(documents);
-        return simpleVectorStore;
-    }
+  @Bean
+  public VectorStore loveAppVectorStore(EmbeddingModel dashscopeEmbeddingModel) {
+    SimpleVectorStore simpleVectorStore = SimpleVectorStore.builder(dashscopeEmbeddingModel).build();
+    // 加载文档
+    List<Document> documents = loveDocumentLoader.loadMarkdowns();
+    simpleVectorStore.add(documents);
+    return simpleVectorStore;
+  }
 }
 ```
 
@@ -2141,4 +2141,556 @@ void doChatWithRagcloud() {
 ```
 
 ![](./img/pic19.png)
+
+
+
+## RAG 知识库进阶
+
+![](./img/pic20.png)
+
+**本章学习📚**
+
+**1、文档收集和切割 - ETL：**通过DocumentReader读取文件，TokenTextSplitter拆分内容，实现文档抽取→转换→加载至向量库
+**2、向量转换和存储：**嵌入模型（如DashScope）生成向量，PGVector/[Redis](https://www.mianshiya.com/bank/1791375592078610434)存储，基于余弦相似度检索语义匹配
+**3、文档过滤和检索：**结合filter[Express](https://www.mianshiya.com/bank/1846180235148320769)ion元数据过滤、similarityThreshold阈值控制，多源结果合并优化召回
+**4、查询增强和关联：**RewriteQuery[Transformer](https://www.mianshiya.com/bank/1821834692534505473)改写查询，RetrievalAugmentationAdvisor动态拼接文档与问题生成答案
+
+### RAG 核心特性 理论知识
+
+#### 文档收集和切割
+
+- **收集原料：**从网站、PDF、数据库等处获取各种知识
+- **切小块：**将大文档分成段落或语义单位，便于后续处理
+- **清洗数据：**删除HTML标签、特殊符号，修正错误文本
+- **保留来源：**记录每块内容的出处，便于后续引用和验证
+
+#### 向量转换和存储
+
+- **翻译成数字：**将文字转换为数字向量，让机器能"理解"含义
+- **保留意义：**相似内容的向量在数学上也相近
+- **高效索引：**使用特殊算法组织向量，加快后续搜索速度
+- **节省空间：**压缩向量数据，在保持质量的同时减少存储需求
+
+#### 文档过滤和检索
+
+- **找相似内容：**计算用户问题与存储文档片段的相似度
+- **多重搜索：**结合关键词匹配和语义理解，提高查找准确性
+- **精细排序：**对初步结果进行二次筛选，把最相关的放在前面
+- **智能筛选：**根据问题背景过滤不相关结果
+
+#### 查询增强和关联
+
+- **理解问题：**分析用户真正想知道什么
+- **改进问题：**自动调整查询，使其更容易找到相关信息
+- **组合信息：**将查询和检索到的文档巧妙结合
+- **事实回答：**让AI基于找到的真实信息生成回答，避免编造
+
+### RAG 最佳实践和调优
+
+####  文档收集和切割 - ETL
+
+**a. 抽取 Extract ：**
+
+用 `**DocumentReader**` **读文档**：读取 PDF、TXT、JSON 等文件 `**new PdfDocumentReader("file.pdf")**`
+
+**b. 转换 Transform ：**
+
+用 `**DocumentTransformer**` **处理文档**：拆分、加摘要、提关键词 `**new TokenTextSplitter().apply(documents)**`
+
+**c. 加载 Load：**
+
+用 `**DocumentWriter**` **存文档**：把结果写入数据库或文件 `**vectorStore.write(documents)**`
+
+**d. 测试片段：**
+
+```java
+package com.yuan.yuanaiagent.rag;
+
+import jakarta.annotation.Resource;
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.document.Document;
+import org.springframework.ai.model.transformer.KeywordMetadataEnricher;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+
+/**
+ * 基于 AI 的文档元信息增强器（为文档补充关键词元信息）
+ */
+@Component
+public class MyKeywordEnricher {
+
+    @Resource
+    private ChatModel dashscopeChatModel;
+
+    /**
+     * 为文档列表添加关键词元信息，提升可搜索性
+     *
+     * @param documents 待增强的文档列表
+     * @return 增强后的文档列表
+     */
+    public List<Document> enrichDocuments(List<Document> documents) {
+        // 创建KeywordMetadataEnricher实例，使用AI模型提取关键词
+        KeywordMetadataEnricher keywordMetadataEnricher = new KeywordMetadataEnricher(dashscopeChatModel, 5);
+        // 执行文档增强操作
+        return keywordMetadataEnricher.apply(documents);
+    }
+}
+```
+
+![](./img/pic21.png)
+
+#### 向量转换和存储（Vector Store）
+
+**a. 工作原理：**
+
+1. **文本转向量** → 用嵌入模型（如 DashScope、Ollama）
+2. **存入数据库** → 支持 PGVector、Redis、Milvus 等
+3. **语义搜索** → 查询也转为向量，找最相似的内容
+
+**b. 常用相似度算法：**
+
+1. 余弦相似度（COSINE_DISTANCE）✅（常用）
+2. 欧氏距离
+3. 点积
+
+**c. 使用步骤（以项目中 PGVector）**：
+
+首先是安装 [PostgreSQL 数据库](https://www.mianshiya.com/bank/1812070255982329858)
+
+```dockerfile
+// 拉取镜像
+docker pull swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/pgvector/pgvector:pg17
+
+// 创建并启动容器
+docker run -itd --restart=always --name=pgvector \
+ -p 5432:5432 \
+ -e POSTGRES_PASSWORD=password \
+ 镜像ID
+
+// 进入PostgreSQL
+psql -U postgres
+
+
+// 判断扩展安装情况
+# -- 1. 查看系统中已注册的扩展（无需先创建，仅验证是否存在安装文件）
+SELECT * FROM pg_available_extensions WHERE name = 'vector';
+# -- 2. 查看当前数据库已安装的所有扩展
+SELECT * FROM pg_extension WHERE extname = 'vector';
+
+// 操作数据库
+# 建立名为 vector_db_test 的数据库
+CREATE DATABASE vector_db_test
+# 进入数据库
+\c  vector_db_test
+# 应用向量扩展到该数据库中
+# -- 启用 pgvector 扩展（扩展名称是 vector，不是 pgvector）
+CREATE EXTENSION vector;
+# -- 查看当前数据库已启用的扩展
+SELECT * FROM pg_extension WHERE extname = 'vector';
+# -- 创建含向量字段的表（无报错则功能正常）
+CREATE TABLE test_embedding (id int, vec vector(128)); -- 128维向量
+```
+
+白嫖了阿里云 3 个月的😇 贴个地址：[阿里云免费试用 - RDS PostgreSQL Serverless](https://free.aliyun.com/?spm=5176.29361554.J__Z58Z6CX7MY__Ll8p1ZOR.2.606c3f87l5tDMu&searchKey=RDS+PostgreSQL+Serverless)
+
+1. PostgreSQL 安装 `pgvector` 插件
+2. 引入依赖：`spring-ai-pgvector-store`或者手动管理`spring-boot-starter-jdbc``postgresql``spring-ai-pgvector-store`
+3. 手动配置 `PgVectorStore`
+4. 调用 `add()` 添加文档，`similaritySearch()` 查询
+
+**d. 代码片段：**
+
+Pg 向量数据库配置
+
+```java
+package com.yuan.yuanaiagent.rag;
+
+import jakarta.annotation.Resource;
+import org.springframework.ai.document.Document;
+import org.springframework.ai.embedding.EmbeddingModel;
+import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.ai.vectorstore.pgvector.PgVectorStore;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.jdbc.core.JdbcTemplate;
+
+import java.util.List;
+
+import static org.springframework.ai.vectorstore.pgvector.PgVectorStore.PgDistanceType.COSINE_DISTANCE;
+import static org.springframework.ai.vectorstore.pgvector.PgVectorStore.PgIndexType.HNSW;
+
+// 为方便开发调试和部署，临时注释，如果需要使用 PgVector 存储知识库，取消注释即可
+@Configuration
+public class PgVectorVectorStoreConfig {
+
+    @Resource
+    private LoveAppDocumentLoader loveAppDocumentLoader;
+
+    @Bean
+    public VectorStore pgVectorVectorStore(JdbcTemplate jdbcTemplate, EmbeddingModel embeddingModel) {
+        PgVectorStore vectorStore = PgVectorStore.builder(jdbcTemplate, embeddingModel)
+                .dimensions(1536)                   // 设置向量的维度，可选，默认为模型维度或1536
+                .distanceType(COSINE_DISTANCE)      // 设置计算向量间距离的方法，可选，默认为余弦距离
+                .indexType(HNSW)                    // 设置索引类型，可选，默认为HNSW（高效近似最近邻搜索）
+                .initializeSchema(true)             // 是否初始化数据库模式，可选，默认为false
+                .schemaName("public")               // 设置数据库模式名称，可选，默认为"public"
+                .vectorTableName("vector_store")    // 设置存储向量数据的表名，可选，默认为"vector_store"
+                .maxDocumentBatchSize(1000)          // 设置文档批量插入的最大数量，可选，默认为10000
+                .build();
+        // 加载文档
+        List<Document> documents = loveAppDocumentLoader.loadMarkdowns();
+        vectorStore.add(documents);
+        return vectorStore;
+    }
+}
+```
+
+**pg 数据库测试**
+
+```java
+package com.yuan.yuanaiagent.rag;
+
+import jakarta.annotation.Resource;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Test;
+import org.springframework.ai.document.Document;
+import org.springframework.ai.vectorstore.SearchRequest;
+import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.boot.test.context.SpringBootTest;
+
+import java.util.List;
+import java.util.Map;
+
+@SpringBootTest
+public class PgVectorVectorStoreConfigTest {
+
+    @Resource(name = "pgVectorVectorStore")
+    private VectorStore pgVectorStore;
+
+    @Test
+    void pgVectorVectorStore() {
+        List<Document> documents = List.of(
+                new Document("阿源 是一位热爱技术的开发者，专注于人工智能、Java 后端开发和系统架构设计。他的博客涵盖了 Spring Boot、AI 应用开发、数据库优化以及 DevOps 等热门主题。",
+                        Map.of("author", "阿源")),
+                new Document("阿源 维护的一个技术分享平台，内容涵盖 Java、Spring AI、PostgreSQL、向量数据库应用等前沿技术，适合对智能系统感兴趣的开发者学习参考。",
+                        Map.of("source", "aYuan.github.io")),
+                new Document("在 阿源 博客中，你可以找到关于如何使用 Spring AI 构建智能代理（Agent）、集成向量数据库如 pgVector，并实现本地化的 RAG 检索增强生成系统等内容。",
+                        Map.of("topic", "RAG", "tags", "Spring AI, PostgreSQL")));
+        // 添加文档
+        pgVectorStore.add(documents);
+        // 相似度查询
+        List<Document> result = pgVectorStore.similaritySearch(SearchRequest.builder().query("阿源").topK(3).build());
+        System.out.println(result);
+        Assertions.assertNotNull(result);
+    }
+}
+```
+
+![](./img/pic23.png)
+
+![](./img/pic22.png)
+
+#### 文档过滤和检索
+
+**a. 预检索：优化用户查询**
+
+- **改写查询**：用 AI 让模糊的问题更清晰`RewriteQueryTransformer`
+- **翻译查询**：将非目标语言翻译成模型支持的语言`TranslationQueryTransformer`
+- **压缩查询**：结合对话历史，生成简洁查询`CompressionQueryTransformer`
+- **扩展查询**：生成多个变体，提高召回率`MultiQueryExpander`
+
+**b. 检索：查找相关文档**
+
+- 使用 `DocumentRetriever` 从向量库中搜索最相关的文档
+- 支持设置：
+- 相似度阈值 `.similarityThreshold(0.7)`
+- 返回数量 `.topK(5)`
+- 元数据过滤 `.filterExpression(...)`
+
+```java
+package com.yuan.yuanaiagent.rag;
+
+import org.springframework.ai.chat.client.advisor.api.Advisor;
+import org.springframework.ai.rag.advisor.RetrievalAugmentationAdvisor;
+import org.springframework.ai.rag.retrieval.search.DocumentRetriever;
+import org.springframework.ai.rag.retrieval.search.VectorStoreDocumentRetriever;
+import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.ai.vectorstore.filter.Filter;
+import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
+
+/**
+ * 创建自定义的 RAG 检索增强顾问的工厂
+ */
+public class LoveAppRagCustomAdvisorFactory {
+
+    /**
+     * 创建自定义的 RAG 检索增强顾问
+     *
+     * @param vectorStore 向量存储
+     * @param status      状态
+     * @return 自定义的 RAG 检索增强顾问
+     */
+    public static Advisor createLoveAppRagCustomAdvisor(VectorStore vectorStore, String status) {
+        // 过滤特定状态的文档
+        Filter.Expression expression = new FilterExpressionBuilder()
+                .eq("status", status)
+                .build();
+        // 创建文档检索器
+        DocumentRetriever documentRetriever = VectorStoreDocumentRetriever.builder()
+                .vectorStore(vectorStore)
+                .filterExpression(expression)   // 过滤条件
+                .similarityThreshold(0.5)       // 相似度阈值
+                .topK(3)                        // 返回文档数量
+                .build();
+        return RetrievalAugmentationAdvisor.builder()
+                .documentRetriever(documentRetriever)
+                .queryAugmenter(LoveAppContextualQueryAugmenterFactory.createInstance())
+                .build();
+    }
+}
+```
+
+- **多源合并**：使用 `ConcatenationDocumentJoiner` 合并多个结果
+
+**c. 检索后：优化结果**
+
+- 对检索到的文档进行：
+- 排序（按相关性）
+- 精简（去重、删冗余）
+- 压缩（减少上下文长度占用）
+
+Spring AI 提供了 `DocumentPostProcessor` 接口用于自定义处理。
+
+**d. 代码片段：**
+
+```java
+package com.yuan.yuanaiagent.rag;
+
+import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.rag.Query;
+import org.springframework.ai.rag.preretrieval.query.transformation.QueryTransformer;
+import org.springframework.ai.rag.preretrieval.query.transformation.RewriteQueryTransformer;
+import org.springframework.stereotype.Component;
+
+/**
+ * 查询重写器
+ */
+@Component
+public class QueryRewriter {
+
+    private final QueryTransformer queryTransformer;
+
+    public QueryRewriter(ChatModel dashscopeChatModel) {
+        ChatClient.Builder builder = ChatClient.builder(dashscopeChatModel);
+        queryTransformer = RewriteQueryTransformer.builder()
+                .chatClientBuilder(builder)
+                .build();
+    }
+
+    /**
+     * 执行查询重写
+     *
+     * @param prompt
+     * @return
+     */
+    public String doQueryRewrite(String prompt) {
+        Query query = new Query(prompt);
+        // 执行查询重写
+        Query transformQuery = queryTransformer.transform(query);
+        // 输出重写后的查询
+        return transformQuery.text();
+    }
+}
+```
+
+![](./img/pic24.png)
+
+#### 查询增强和关联
+
+**a. 查询增强目标：**
+
+- 提高用户查询质量
+- 增加检索命中率
+- 提供上下文，辅助 AI 生成更准确回答
+
+**b. 核心组件：**
+
+**ⅰ. `QuestionAnswerAdvisor`**
+
+- 将用户问题 + 检索到的文档拼成新 Prompt，发给 AI。
+- 支持设置：
+- 相似度阈值 `.similarityThreshold()`
+- 返回数量 `.topK()`
+- 动态过滤条件 `.FILTER_EXPRESSION`
+- 可自定义提示词模板。
+
+**ⅱ. `RetrievalAugmentationAdvisor`**
+
+- 更灵活、模块化的 RAG 实现方式。
+- 支持组合使用：
+- 文档检索器 `.documentRetriever(...)`
+- 查询转换器（如改写、翻译）`.queryTransformers(...)`
+- 上下文增强器 `.queryAugmenter(...)`
+
+**ⅲ. 空上下文处理：`ContextualQueryAugmenter`**
+
+- 默认不允许空上下文（无文档时不让回答）
+- 可通过 `.allowEmptyContext(true)` 允许 AI 自由作答
+- 支持自定义提示词模板，包括：
+- 正常情况 `.promptTemplate(...)`
+- 无文档时 `.emptyContextPromptTemplate(...)`（如友好提示）
+
+**c. 代码片段：**
+
+**`QuestionAnswerAdvisor`**和**`RetrievalAugmentationAdvisor`**在前面章节也使用过了就不多展示
+
+**上下文查询增强器的工厂**
+
+```java
+package com.yuan.yuanaiagent.rag;
+
+import org.springframework.ai.chat.prompt.PromptTemplate;
+import org.springframework.ai.rag.generation.augmentation.ContextualQueryAugmenter;
+
+/**
+ * 创建上下文查询增强器的工厂
+ */
+public class LoveAppContextualQueryAugmenterFactory {
+
+    public static ContextualQueryAugmenter createInstance() {
+        PromptTemplate emptyContextPromptTemplate = new PromptTemplate("""
+                你应该输出下面的内容：
+                抱歉，我只能回答恋爱相关的问题，别的没办法帮到您哦，
+                有问题可以联系后天客服: 666666
+                """);
+        return ContextualQueryAugmenter.builder()
+                .allowEmptyContext(false)
+                .emptyContextPromptTemplate(emptyContextPromptTemplate)
+                .build();
+    }
+}
+```
+
+**RAG 检索增强顾问的工厂**
+
+```java
+package com.yuan.yuanaiagent.rag;
+
+import org.springframework.ai.chat.client.advisor.api.Advisor;
+import org.springframework.ai.rag.advisor.RetrievalAugmentationAdvisor;
+import org.springframework.ai.rag.retrieval.search.DocumentRetriever;
+import org.springframework.ai.rag.retrieval.search.VectorStoreDocumentRetriever;
+import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.ai.vectorstore.filter.Filter;
+import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
+
+/**
+ * 创建自定义的 RAG 检索增强顾问的工厂
+ */
+public class LoveAppRagCustomAdvisorFactory {
+
+    /**
+     * 创建自定义的 RAG 检索增强顾问
+     *
+     * @param vectorStore 向量存储
+     * @param status      状态
+     * @return 自定义的 RAG 检索增强顾问
+     */
+    public static Advisor createLoveAppRagCustomAdvisor(VectorStore vectorStore, String status) {
+        // 过滤特定状态的文档
+        Filter.Expression expression = new FilterExpressionBuilder()
+                .eq("status", status)
+                .build();
+        // 创建文档检索器
+        DocumentRetriever documentRetriever = VectorStoreDocumentRetriever.builder()
+                .vectorStore(vectorStore)
+                .filterExpression(expression)   // 过滤条件
+                .similarityThreshold(0.5)       // 相似度阈值
+                .topK(3)                        // 返回文档数量
+                .build();
+        return RetrievalAugmentationAdvisor.builder()
+                .documentRetriever(documentRetriever)
+                .queryAugmenter(LoveAppContextualQueryAugmenterFactory.createInstance())
+                .build();
+    }
+}
+```
+
+**d. 测试结果：**
+
+![](./img/pic25.png)
+
+### 扩展知识 - RAG 高级知识
+
+#### 混合检索策略
+
+不同检索方法各有优劣，混合使用效果更佳。
+
+| 方法       | 特点                   | 适用场景         |
+| ---------- | ---------------------- | ---------------- |
+| 向量检索   | 理解语义，不敏感关键词 | 概念性问题       |
+| 全文检索   | 精确匹配关键词         | 关键词明确的问题 |
+| 结构化检索 | 支持元数据过滤         | 条件筛选         |
+| 知识图谱   | 发现实体关系           | 复杂推理         |
+
+**常见混合策略：**
+
+- **并行检索**：多个方法进行检索，结果融合
+- **级联检索**：向下逐层优化，先向量召回，再关键词/结构化过滤
+- **动态路由**：根据问题类型自动选择最优检索方式
+
+#### 大模型幻觉
+
+AI 有时会“自信地说错话”，这就是幻觉。
+
+[面试题](https://www.mianshiya.com/)常考，因为我也被问过~
+
+**类型：**
+
+- **事实性幻觉**：内容与事实不符（如“Python 之父发明了 Java”）
+- **逻辑性幻觉**：推理错误（如“1+1=3”）
+- **自洽性幻觉**：前后矛盾（如“我很年轻，才80岁”）
+
+**解决方案：**
+
+- ✅ 使用 RAG 引入外部知识
+- ✅ 添加引用标注机制
+- ✅ 提示工程优化（如思维链 CoT）
+- ✅ 事实验证模型 + 人工审核
+
+#### RAG 应用评估
+
+评估回答质量、系统性能和用户体验。
+
+**核心评估维度：**
+
+- **检索质量**：召回率、精确率、NDCG
+- **生成质量**：准确性、完整性、相关性、引用正确性
+- **用户满意度**：用户打分反馈
+
+**评估流程：**
+
+1. 构建测试集（含标准答案和相关文档）
+2. 执行检索 → 计算指标
+3. 自动生成回答 → 自动或人工评估
+4. 分析问题 → 调整检索或生成策略
+
+####  高级 RAG 架构
+
+为应对复杂需求设计的进阶架构。
+
+| 架构               | 特点                             | 场景                                      |
+| ------------------ | -------------------------------- | ----------------------------------------- |
+| C-RAG（自纠错）    | 检索 → 生成 → 验证 → 纠错        | 对准确性要求高的领域（医疗、法律）        |
+| Self-RAG（自省式） | 判断是否需要检索                 | 基础问题无需检索（如“1+1=?”）             |
+| RAPTOR（树状检索） | 分解问题 → 多次检索 → 综合回答   | 多方面复杂问题（如“介绍A、B、C三个模块”） |
+| 多智能体 RAG       | 多角色协作（检索、生成、校验等） | 复杂任务分工处理（金融分析、客服系统）    |
+
+#### 扩展完成
+
+**GitHub 读取器**
+
+GitHubDocumentLoader
 

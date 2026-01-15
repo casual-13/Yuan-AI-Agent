@@ -17,11 +17,11 @@ import java.util.List;
  */
 @Component
 @Slf4j
-public class LoveDocumentLoader {
+public class LoveAppDocumentLoader {
 
     private final ResourcePatternResolver resourcePatternResolver;
 
-    public LoveDocumentLoader(ResourcePatternResolver resourcePatternResolver) {
+    public LoveAppDocumentLoader(ResourcePatternResolver resourcePatternResolver) {
         this.resourcePatternResolver = resourcePatternResolver;
     }
 
@@ -32,7 +32,6 @@ public class LoveDocumentLoader {
      */
     public List<Document> loadMarkdowns() {
         List<Document> allDocuments = new ArrayList<>();
-
         try {
             Resource[] resources = resourcePatternResolver.getResources("classpath:documents/*.md");
             for (Resource resource : resources) {
