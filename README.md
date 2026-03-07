@@ -390,7 +390,7 @@ public class LangChainAiInvoke {
 
 
 
-## 第二章 AI应用开发
+## 第二章：AI应用开发
 
 **本章学习**
 
@@ -1812,7 +1812,7 @@ public LoveApp(ChatModel dashscopeChatModel, @Qualifier("myBatisPlusChatMemory")
 
 
 
-## 第三章 RAG知识库基础
+## 第三章：RAG知识库基础
 
 **本章学习📚**
 
@@ -2144,7 +2144,7 @@ void doChatWithRagcloud() {
 
 
 
-## RAG 知识库进阶
+## 第四章：RAG 知识库进阶
 
 ![](./img/pic20.png)
 
@@ -2694,3 +2694,600 @@ AI 有时会“自信地说错话”，这就是幻觉。
 
 GitHubDocumentLoader
 
+
+
+## 第五章：工具调用
+
+**本章学习**
+
+1. **核心概念**：工具调用流程（用户提问→模型判断→执行工具→反馈结果），安全设计由应用控制而非模型直接调用。
+2. **Spring AI工具开发**：注解式工具（`@Tool`）与函数式工具（`Function<Req, Res>`）对比，支持参数类型、返回值及适用场景差异。
+3. **六大核心工具**：文件操作（Hutool）、联网搜索（SearchAPI）、网页抓取（Jsoup）、终端命令（ProcessBuilder）、资源下载（Hutool）、PDF生成（iText），各具技术实现与注意事项。
+
+### 核心概念解析
+
+![](./img/pic26.png)
+
+**工具调用原理**
+
+- **工作流程**
+  用户提问 → 模型判断需调用工具 → 返回工具名称/参数 → 程序执行工具 → 结果反馈给模型生成回答
+  *示例：查询 CSDN 热门文章*
+  `模型调用网页抓取工具(WebScrapingTool) → 程序执行jsoup解析页面 → 返回结果生成回答`
+- **安全设计**
+  ✅ 工具由应用控制而非模型直接调用，防止敏感操作
+
+### Spring AI 工具开发实践
+
+ **定义工具的两种方式对比**
+
+| 维度     | 注解式工具（推荐）                    | 函数式工具（高阶）                     |
+| -------- | ------------------------------------- | -------------------------------------- |
+| 定义方式 | @Tool注解标记方法                     | 实现Function<Req, Res>接口             |
+| 参数支持 | ✅ 支持基本类型/POJO/集合              | ❌ 不支持基本类型、Optional             |
+| 返回值   | ✅ 支持任意可序列化类型                | ❌ 需包装为响应对象                     |
+| 适用场景 | 快速开发、新项目                      | 集成现有函数式API、动态工具生成        |
+| 示例代码 | `@Tool(desc="天气") String getW(...)` | `@Bean Function<Req, Res> weatherFn()` |
+
+**工具注册与调用策略**
+
+```java
+// 全局注册（推荐）
+ChatClient.builder(chatModel)
+  .defaultTools(new FileTools(), new WebTools()) 
+  .build();
+
+// 按需调用（灵活）
+ChatClient.create(chatModel)
+  .prompt("生成报告")
+  .tools(new ReportTools()) 
+  .call();
+
+// 底层绑定（高级）
+Prompt prompt = new Prompt("查询",
+  ToolCallingChatOptions.builder()
+    .toolCallbacks(ToolCallbacks.from(new DbTool()))
+    .build());
+
+```
+
+### 六大核心工具开发详解
+
+**6大核心工具实现要点**
+
+| 工具类型 | 关键实现技术                   | 注意事项                   |
+| -------- | ------------------------------ | -------------------------- |
+| 文件操作 | Hutool文件工具                 | 隔离存储目录 /tmp          |
+| 联网搜索 | Search API + JSON解析          | API Key保密，返回前5条结果 |
+| 网页抓取 | Jsoup库                        | 异常捕获，防止404中断      |
+| 终端操作 | Java Process API               | Windows需用cmd.exe /c前缀  |
+| 资源下载 | Hutool HttpUtil.downloadFile   | 大文件需考虑断点续传       |
+| PDF生成  | iText库（STSongStd-Light字体） | 中文需特殊字体配置         |
+
+#### 文件操作工具 (读取和写入)
+
+**实现要点：**
+
+使用 Java 的文件操作技术采用 Hutool 工具（`**FileUtil**`），封装了文件的读写功能，完成文件存储路径统一管理、异常处理和编码一致性等问题，提升了开发效率和系统稳定性。
+
+```java
+package com.yuan.yuanaiagent.tools;
+
+import cn.hutool.core.io.FileUtil;
+import cn.hutool.core.io.IORuntimeException;
+import com.yuan.yuanaiagent.constant.FileConstant;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
+
+/**
+ * 文件操作工具类（提供文件读写功能）
+ */
+public class FileOperationTool {
+
+    // 文件保存目录
+    private final String FILE_DIR = FileConstant.FILE_SAVE_DIR + "/file";
+
+    /**
+     * 读取文件内容
+     */
+    @Tool(description = "Read content from a file")
+    public String readFile(@ToolParam(description = "Name of a file to read") String fileName) {
+        String filePath = FILE_DIR + "/" + fileName;
+        try {
+            return FileUtil.readUtf8String(filePath);
+        } catch (IORuntimeException e) {
+            return "Error reading file: " + e.getMessage();
+        }
+    }
+
+    /**
+     * 写入文件内容
+     */
+    @Tool(description = "Write content to a file")
+    public String writeFile(@ToolParam(description = "Name of a file to write") String fileName,
+                            @ToolParam(description = "Content to write to the file") String content) {
+        String filePath = FILE_DIR + "/" + fileName;
+        try {
+            // 创建目录
+            FileUtil.mkdir(FILE_DIR);       // 确保目录存在
+            FileUtil.writeUtf8String(content, filePath);
+            return "File written successfully to " + filePath;
+        } catch (IORuntimeException e) {
+            return "Error writing to file: " + e.getMessage();
+        }
+    }
+}
+```
+
+**测试结果**
+
+![](./img/pic27.png)
+
+![](./img/pic28.png)
+
+#### 联网搜索工具（Search API）
+
+**实现要点：**
+
+使用 **Hutool** 和 **SearchAPI** 实现了对百度搜索引擎的网页搜索功能，通过封装 HTTP 请求和结果处理，实现了在 Java 应用中快速集成搜索能力的问题，方便获取并结构化展示搜索结果。
+
+```java
+package com.yuan.yuanaiagent.tools;
+
+import cn.hutool.http.HttpUtil;
+import cn.hutool.json.JSONArray;
+import cn.hutool.json.JSONObject;
+import cn.hutool.json.JSONUtil;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+/**
+ * 网页搜索工具
+ */
+public class WebSearchTool {
+
+    // SearchAPI 的搜索接口地址
+    private static final String SEARCH_API_URL = "https://www.searchapi.io/api/v1/search";
+
+    private final String apiKey;
+
+    public WebSearchTool(String apiKey) {
+        this.apiKey = apiKey;
+    }
+
+    @Tool(description = "Search for information from Baidu Search Engine")
+    public String searchWeb(@ToolParam(description = "Search que|ry keyword") String query) {
+        // 构建请求参数
+        Map<String, Object> paramMap = new HashMap<>();
+        paramMap.put("q", query);
+        paramMap.put("api_key", apiKey);
+        paramMap.put("engine", "baidu");
+
+        try {
+            String response = HttpUtil.get(SEARCH_API_URL, paramMap);
+            // 取出返回结果的前 5 条
+            JSONObject jsonObject = JSONUtil.parseObj(response);
+            // 提取 organic_results 部分
+            JSONArray organicResults = jsonObject.getJSONArray("organic_results");
+            List<Object> objects = organicResults.subList(0, 5);
+            // 拼接搜索结果为字符串
+            String result = objects.stream().map(obj -> {
+                JSONObject tmpJSONObject = (JSONObject) obj;
+                return tmpJSONObject.toString();
+            }).collect(Collectors.joining(","));
+            return result;
+        } catch (Exception e) {
+            return "Error searching Baidu: " + e.getMessage();
+        }
+    }
+}
+```
+
+
+
+#### 网页抓取工具（Web Scraping Tool）
+
+**实现要点：**
+
+这个工具类使用 **Jsoup** 实现了网页内容的抓取功能，通过封装 HTML 页面的请求和解析，实现了从指定 URL 提取网页内容的问题，具备良好的异常处理能力，适用于简单的网页数据采集场景。
+
+```java
+package com.yuan.yuanaiagent.tools;
+
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
+
+import java.io.IOException;
+
+/**
+ * 网页抓取工具
+ */
+public class WebScrapingTool {
+
+    /**
+     * 抓取指定URL的网页内容
+     */
+    @Tool(description = "Scrape the content of a web page")
+    public String scrapeWebPage(@ToolParam(description = "URL of the web page to scrape") String url) {
+        try {
+            // 使用Jsoup获取页面内容
+            Document document = Jsoup.connect(url).get();
+            return document.html();
+        } catch (IOException e) {
+            return "Error scraping web page: " + e.getMessage();
+        }
+    }
+}
+```
+
+**测试结果：**
+
+![](./img/pic29.png)
+
+#### 终端操作工具（Terminal Operation Tool）
+
+**实现要点：**
+
+使用 Java 的 `**ProcessBuilder**`和系统命令执行功能，实现了在终端中执行命令的操作，实现了从 Java 程序调用和获取系统命令执行结果的问题，适用于本地命令执行与调试场景。
+
+```java
+package com.yuan.yuanaiagent.tools;
+
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+
+/**
+ * 终端操作工具
+ */
+public class TerminalOperationTool {
+
+    /**
+     * 执行终端命令并返回结果
+     */
+    @Tool(description = "Execute a command in the terminal")
+    public String executeTerminalCommand(@ToolParam(description = "Command to execute in the terminal") String command) {
+        StringBuilder output = new StringBuilder();
+        try {
+            // 使用ProcessBuilder执行命令
+            ProcessBuilder builder = new ProcessBuilder("cmd.exe", "/c", command);
+            Process process = builder.start();
+
+            // 读取命令输出
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    output.append(line).append("\n");
+                }
+            }
+
+            // 检查命令执行结果
+            int exitCode = process.waitFor();
+            if (exitCode != 0) {
+                output.append("Command execution failed with exit code: ").append(exitCode);
+            }
+        } catch (IOException | InterruptedException e) {
+            output.append("Error executing command: ").append(e.getMessage());
+        }
+        return output.toString();
+    }
+}
+```
+
+**测试结果：**
+
+![](./img/pic30.png)
+
+#### 资源下载工具（Resource Download Tool）
+
+**实现要点：**
+
+基于 **Hutool** 的网络和文件操作功能，实现了从指定 URL 下载资源并保存到本地的功能，实现了远程资源下载与本地存储的问题，适用于图片、文件等内容的自动下载和保存场景。
+
+```java
+package com.yuan.yuanaiagent.tools;
+
+import cn.hutool.core.io.FileUtil;
+import cn.hutool.http.HttpUtil;
+import com.yuan.yuanaiagent.constant.FileConstant;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
+
+import java.io.File;
+
+/**
+ * 资源下载工具
+ */
+public class ResourceDownloadTool {
+
+    /**
+     * 从URL下载资源
+     */
+    @Tool(description = "Download a resource from a given URL")
+    public String downloadResource(@ToolParam(description = "URL of the resource to download") String url,
+                                   @ToolParam(description = "Name of the file to save the downloaded resource") String fileName) {
+        String fileDir = FileConstant.FILE_SAVE_DIR + "/download";
+        String filePath = fileDir + "/" + fileName;
+        try {
+            // 创建目录
+            FileUtil.mkdir(fileDir);
+            // 使用 Hutool 的 downloadFile 方法下载资源
+            HttpUtil.downloadFile(url, new File(filePath));
+            return "Resource downloaded successfully to: " + filePath;
+        } catch (Exception e) {
+            return "Error downloading resource: " + e.getMessage();
+        }
+    }
+}
+```
+
+**测试结果：**
+
+![](./img/pic31.png)
+
+#### PDF 生成工具（PDF Generation Tool）
+
+**实现要点：**
+
+使用 **iTextPDF** 和 **Hutool** ，实现了将文本内容生成 PDF 文件的功能，实现了在 Java 应用中动态创建支持中文的 PDF 文档的问题，适用于文档导出、报告生成等场景。
+
+```java
+package com.yuan.yuanaiagent.tools;
+
+import cn.hutool.core.io.FileUtil;
+import com.itextpdf.kernel.font.PdfFont;
+import com.itextpdf.kernel.font.PdfFontFactory;
+import com.itextpdf.kernel.pdf.PdfDocument;
+import com.itextpdf.kernel.pdf.PdfWriter;
+import com.itextpdf.layout.Document;
+import com.itextpdf.layout.element.Paragraph;
+import com.yuan.yuanaiagent.constant.FileConstant;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
+
+/**
+ * PDF 生成工具
+ */
+public class PDFGenerationTool {
+
+    @Tool(description = "Generate a PDF file with given content", returnDirect = false)
+    public String generatePDF(@ToolParam(description = "Name of the file to save the generated PDF") String fileName,
+                              @ToolParam(description = "Content to be included in the PDF") String content) {
+            String fileDir = FileConstant.FILE_SAVE_DIR + "/pdf";
+            String filePath = fileDir + "/" + fileName;
+            try {
+                // 创建目录
+                FileUtil.mkdir(fileDir);
+                // 创建 PdfWriter 和 PdfDocument 对象
+                try (PdfWriter writer = new PdfWriter(filePath)) {
+                    PdfDocument pdf = new PdfDocument(writer);
+                    Document document = new Document(pdf);
+                    // 自定义字体（需要人工下载字体文件到特定目录）
+//                String fontPath = Paths.get("src/main/resources/static/fonts/simsun.ttf")
+//                        .toAbsolutePath().toString();
+//                PdfFont font = PdfFontFactory.createFont(fontPath,
+//                        PdfFontFactory.EmbeddingStrategy.PREFER_EMBEDDED);
+                    // 使用内置中文字体
+                    PdfFont font = PdfFontFactory.createFont("STSongStd-Light", "UniGB-UCS2-H");
+                    document.setFont(font);
+                    // 创建段落
+                    Paragraph paragraph = new Paragraph(content);
+                    // 添加段落并关闭文档
+                    document.add(paragraph);
+                }
+                return "PDF generated successfully to: " + filePath;
+            } catch (Exception e) {
+                return "Error generating PDF: " + e.getMessage();
+            }
+    }
+}
+```
+
+**测试结果：**
+
+#### 时间获取工具
+
+```java
+package com.yuan.yuanaiagent.tools;
+
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
+import org.springframework.stereotype.Component;
+
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+
+/**
+ * 日期时间工具类
+ */
+@Component
+public class DateTimeTool {
+
+    private static final String DEFAULT_DATE_FORMAT = "yyyy-MM-dd";
+    private static final String DEFAULT_DATETIME_FORMAT = "yyyy-MM-dd HH:mm:ss";
+
+    /**
+     * 获取当前日期时间
+     */
+    @Tool(description = "Get current date and time in specified format")
+    public String getCurrentDateTime(
+            @ToolParam(description = "Format pattern (e.g. yyyy-MM-dd HH:mm:ss)") String format
+    ) {
+        try {
+            String formatPattern = (format == null || format.isEmpty()) ? DEFAULT_DATETIME_FORMAT : format;
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern(formatPattern);
+            return LocalDateTime.now().format(formatter);
+        } catch (Exception e) {
+            return "Error getting current date time: " + e.getMessage();
+        }
+    }
+}
+```
+
+```java
+package com.yuan.yuanaiagent.tools;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+class DateTimeToolTest {
+
+    private DateTimeTool dateTimeTool;
+
+    @BeforeEach
+    void setUp() {
+        dateTimeTool = new DateTimeTool();
+    }
+
+    @Test
+    void testGetCurrentDateTime() {
+        // Test with default format
+        String result = dateTimeTool.getCurrentDateTime("");
+        System.out.println(result);
+        
+        // Test with custom format
+        String customResult = dateTimeTool.getCurrentDateTime("yyyy/MM/dd");
+        System.out.println(customResult);
+    }
+
+}
+```
+
+**测试结果**
+
+![](./img/pic32.png)
+
+
+
+## 第六章：MCP协议
+
+**本章学习**
+
+1. MCP协议标准化AI工具调用
+2. 支持云平台/客户端/程序内集成
+3. Spring AI集成客户端与服务端
+4. 图片搜索服务配置传输模式
+5. 安全实践：按需使用/容错/兼容性
+6. 部署对比：本地/远程/Serverless
+
+###  MCP协议概述
+
+**什么是MCP？**
+
+MCP（Model Context Protocol）是AI与外部系统的“USB接口”🔌，通过标准化协议让AI调用工具、资源和服务。
+
+核心作用：
+
+1、增强AI能力（如地图查询、数据库交互）
+
+- 例如通过高德地图API快速获取约会地点信息，无需依赖模型自身知识库。
+
+2、统一工具调用标准（降低开发成本）
+
+- 避免重复开发，如多个项目调用地图查询功能时，直接接入MCP服务即可。
+
+3、打造服务生态（类似NPM/Maven生态）
+
+- 开发者共享MCP服务，形成工具市场（如[mcp.so](https://mcp.so/)），类似手机应用商店。
+
+**架构解析 🧱**
+
+1. 宏观架构：
+
+- 客户端-服务器模式：客户端（如AI应用）可连接多个MCP服务器，调用不同服务。
+- 关键组件：
+- *客户端*：自动匹配协议版本，管理工具发现与数据传输。
+- *服务端*：提供工具、资源及日志记录，支持多客户端并发连接。
+
+1. SDK三层架构：
+
+- 传输层：处理JSON-RPC消息。
+- 会话层：管理通信状态与模式。
+- 客户端/服务端层：分别通过`McpClient`和`McpServer`实现协议操作。
+
+**通信流程图：**
+
+![](./img/pic33.png)
+
+### MCP的3种使用方式
+
+#### 流程图分析
+
+![](./img/pic34.png)
+
+#### **云平台调用** **🌐****（以阿里云百炼为例）**
+
+**核心优势：**
+
+- **预置服务**：直接使用官方提供的 MCP 服务。
+- **零部署成本**：无需本地运行，通过平台配置即可调用。
+
+**操作步骤：**
+
+1. 进入阿里云百炼控制台 → 选择智能体应用 → 添加 MCP 服务。
+2. 选择预置服务，配置 API Key 后启用。
+3. 在 Prompt 中输入需求，AI 会自动调用 MCP 工具并返回结果。
+
+**测试流程：**
+
+
+
+#### **软件客户端调用** **💻****（以 Cursor 编辑器为例）**
+
+1. **核心优势**：
+
+   - **本地运行**：通过 Node.js（注：本机需要安装 nodejs 环境） 和 NPX 启动 MCP 服务。
+   - **灵活调试**：适合开发者快速测试工具功能。
+
+   **操作步骤**：
+
+   1. **环境准备**
+
+   - 安装 [Node.js](https://nodejs.org/zh-cn) 或者用 [NVM - GitHub](https://github.com/coreybutler/nvm-windows/releases) 管理 node 环境。
+   - 获取 API Key 或者 一些 mcp 不用。
+
+   1. **配置 MCP 服务**
+
+   ```
+   {
+     "mcpServers": {
+       "amap-maps": {
+         "command": "npx",
+         "args": ["-y", "@amap/amap-maps-mcp-server"],
+         "env": { "AMAP_MAPS_API_KEY": "你的Key" }
+       }
+     }
+   }
+   ```
+
+   - 在 Cursor 设置中找到 `MCP` 选项 → 添加全局 MCP Server。
+   - 将 [MCP 市场](https://mcp.so/server/amap-maps/amap) 提供的配置粘贴至 `mcp.json`，替换 API Key：
+
+   1. **测试运行**
+
+   - 输入 Prompt 测试 MCP 调用。
+   - **⚠️** **注意成本**：AI 可能会 频繁调用 可能导致 API 费用激增。
+
+   **效果截图**（请补充 Cursor 调用结果截图📍）
+
+   ```
+   "hotnews": {
+     "command": "cmd",
+     "args": [
+       "/c",
+       "npx",
+       "-y",
+       "@wopal/mcp-server-hotnews"
+     ]
+   },
+   ```

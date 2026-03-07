@@ -124,8 +124,8 @@ public class LoveApp {
     @Resource
     private Advisor loveAppRagCloudAdvisor;
 
-    @Resource
-    private VectorStore pgVectorVectorStore;
+    /*@Resource
+    private VectorStore pgVectorVectorStore;*/
 
     @Resource
     private QueryRewriter queryRewriter;
